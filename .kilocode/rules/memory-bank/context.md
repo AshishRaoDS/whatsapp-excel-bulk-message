@@ -86,3 +86,4 @@ export async function GET() {
 |------|---------|
 | Initial | Template created with base setup |
 | 2026-02-27 | Built WhatsApp Bulk Sender app: Excel file upload, QR code auth, bulk message sending |
+| 2026-02-27 | Fixed QR code not appearing: installed system Chrome libs, configured Puppeteer executablePath using puppeteer.executablePath() to resolve correct Chrome binary for current user |
