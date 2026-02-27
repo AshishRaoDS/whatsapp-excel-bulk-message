@@ -1,10 +1,15 @@
-import makeWASocket, {
-  useMultiFileAuthState as getMultiFileAuthState,
-  DisconnectReason,
-  type WASocket,
-  type ConnectionState,
-} from "@whiskeysockets/baileys";
-import qrcode from "qrcode";
+/**
+ * WhatsApp Business Cloud API integration
+ *
+ * Uses Meta's official WhatsApp Business Cloud API.
+ * No browser or WebSocket connection needed — works from any server.
+ *
+ * Setup:
+ * 1. Go to https://developers.facebook.com/
+ * 2. Create an App → Business → WhatsApp
+ * 3. Get your Phone Number ID and Access Token from the API Setup page
+ * 4. Enter them in the app settings
+ */
 
 export type WhatsAppStatus =
   | "disconnected"
@@ -15,186 +20,130 @@ export type WhatsAppStatus =
   | "error";
 
 interface WhatsAppState {
-  socket: WASocket | null;
   status: WhatsAppStatus;
-  qrDataUrl: string | null;
-  pairingCode: string | null;
   error: string | null;
-  saveCreds: (() => Promise<void>) | null;
+  phoneNumberId: string | null;
+  accessToken: string | null;
 }
 
 const state: WhatsAppState = {
-  socket: null,
   status: "disconnected",
-  qrDataUrl: null,
-  pairingCode: null,
   error: null,
-  saveCreds: null,
+  phoneNumberId: null,
+  accessToken: null,
 };
-
-const AUTH_FOLDER = "/tmp/whatsapp-auth";
 
 export function getState() {
   return {
     status: state.status,
-    qrDataUrl: state.qrDataUrl,
-    pairingCode: state.pairingCode,
+    qrDataUrl: null,
+    pairingCode: null,
     error: state.error,
+    isConfigured: !!(state.phoneNumberId && state.accessToken),
   };
 }
 
+/**
+ * Configure the WhatsApp Cloud API credentials.
+ * Validates them by calling the API.
+ */
 export async function initializeClient(
-  phoneNumber?: string
+  phoneNumberId?: string,
+  accessToken?: string
 ): Promise<void> {
-  // If already connected or connecting, don't re-initialize
-  if (state.socket && state.status !== "disconnected" && state.status !== "error") {
+  if (!phoneNumberId || !accessToken) {
+    state.status = "error";
+    state.error = "Phone Number ID and Access Token are required";
     return;
   }
 
-  // Clean up any existing socket
-  if (state.socket) {
-    try {
-      state.socket.end(undefined);
-    } catch {
-      // ignore cleanup errors
-    }
-    state.socket = null;
-  }
-
   state.status = "connecting";
-  state.qrDataUrl = null;
-  state.pairingCode = null;
   state.error = null;
+  state.phoneNumberId = phoneNumberId;
+  state.accessToken = accessToken;
 
   try {
-    const { state: authState, saveCreds } =
-      await getMultiFileAuthState(AUTH_FOLDER);
-    state.saveCreds = saveCreds;
-
-    const usePairingCode = !!phoneNumber;
-
-    const socket = makeWASocket({
-      auth: authState,
-      printQRInTerminal: false,
-      // If using pairing code, we don't need QR
-      browser: usePairingCode
-        ? ["WhatsApp Bulk Sender", "Chrome", "1.0.0"]
-        : undefined,
-    });
-
-    state.socket = socket;
-
-    // If using pairing code method, request it
-    if (usePairingCode && !authState.creds.registered) {
-      try {
-        // Clean the phone number: remove spaces, dashes, +, etc.
-        const cleaned = phoneNumber.replace(/[\s\-\(\)\+]/g, "");
-        const code = await socket.requestPairingCode(cleaned);
-        state.pairingCode = code;
-        state.status = "qr_ready"; // reuse this status to show pairing code
-        console.log("[WhatsApp] Pairing code:", code);
-      } catch (err) {
-        const error = err instanceof Error ? err.message : "Unknown error";
-        console.error("[WhatsApp] Failed to get pairing code:", error);
-        state.status = "error";
-        state.error = `Failed to get pairing code: ${error}`;
-        return;
+    // Validate credentials by fetching the phone number info
+    const res = await fetch(
+      `https://graph.facebook.com/v18.0/${phoneNumberId}?fields=display_phone_number,verified_name`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
       }
+    );
+
+    const data = (await res.json()) as {
+      display_phone_number?: string;
+      verified_name?: string;
+      error?: { message: string; code: number };
+    };
+
+    if (!res.ok || data.error) {
+      const errMsg = data.error?.message ?? `HTTP ${res.status}`;
+      state.status = "error";
+      state.error = `Invalid credentials: ${errMsg}`;
+      state.phoneNumberId = null;
+      state.accessToken = null;
+      return;
     }
 
-    // Handle connection updates
-    socket.ev.on("connection.update", async (update: Partial<ConnectionState>) => {
-      const { connection, lastDisconnect, qr } = update;
-
-      // QR code received (only when not using pairing code)
-      if (qr && !usePairingCode) {
-        try {
-          state.qrDataUrl = await qrcode.toDataURL(qr);
-          state.status = "qr_ready";
-          console.log("[WhatsApp] QR code generated");
-        } catch {
-          state.error = "Failed to generate QR code";
-          state.status = "error";
-        }
-      }
-
-      if (connection === "open") {
-        state.status = "ready";
-        state.qrDataUrl = null;
-        state.pairingCode = null;
-        console.log("[WhatsApp] Connected successfully!");
-      }
-
-      if (connection === "close") {
-        const statusCode =
-          (lastDisconnect?.error as { output?: { statusCode?: number } })?.output
-            ?.statusCode;
-
-        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-
-        console.log(
-          "[WhatsApp] Connection closed. Status code:",
-          statusCode,
-          "Reconnecting:",
-          shouldReconnect
-        );
-
-        state.socket = null;
-        state.qrDataUrl = null;
-        state.pairingCode = null;
-
-        if (shouldReconnect) {
-          // Auto-reconnect after a short delay
-          state.status = "connecting";
-          setTimeout(() => {
-            initializeClient(phoneNumber).catch(console.error);
-          }, 3000);
-        } else {
-          state.status = "disconnected";
-          state.error = "Logged out from WhatsApp. Please reconnect.";
-          // Clear auth state on logout
-          try {
-            const { rmSync } = await import("fs");
-            rmSync(AUTH_FOLDER, { recursive: true, force: true });
-          } catch {
-            // ignore
-          }
-        }
-      }
-    });
-
-    // Save credentials whenever they update
-    socket.ev.on("creds.update", async () => {
-      if (state.saveCreds) {
-        await state.saveCreds();
-      }
-    });
+    console.log(
+      `[WhatsApp] Connected as: ${data.verified_name} (${data.display_phone_number})`
+    );
+    state.status = "ready";
   } catch (err) {
     const error = err instanceof Error ? err.message : "Unknown error";
-    console.error("[WhatsApp] Failed to initialize:", error);
+    console.error("[WhatsApp] Failed to validate credentials:", error);
     state.status = "error";
-    state.error = `Failed to start WhatsApp: ${error}`;
-    state.socket = null;
+    state.error = `Connection failed: ${error}`;
+    state.phoneNumberId = null;
+    state.accessToken = null;
   }
 }
 
+/**
+ * Send a WhatsApp message via the Cloud API.
+ */
 export async function sendMessage(
   phone: string,
   message: string
 ): Promise<{ success: boolean; error?: string }> {
-  if (!state.socket || state.status !== "ready") {
+  if (state.status !== "ready" || !state.phoneNumberId || !state.accessToken) {
     return { success: false, error: "WhatsApp is not connected" };
   }
 
   try {
-    // Format phone number: remove spaces, dashes, parentheses
-    const cleaned = phone.replace(/[\s\-\(\)]/g, "");
-    // Remove leading + if present, then add @s.whatsapp.net
-    const jid = cleaned.startsWith("+")
-      ? cleaned.slice(1) + "@s.whatsapp.net"
-      : cleaned + "@s.whatsapp.net";
+    // Clean phone number: remove spaces, dashes, parentheses, leading +
+    const cleaned = phone.replace(/[\s\-\(\)\+]/g, "");
 
-    await state.socket.sendMessage(jid, { text: message });
+    const res = await fetch(
+      `https://graph.facebook.com/v18.0/${state.phoneNumberId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${state.accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          to: cleaned,
+          type: "text",
+          text: { body: message },
+        }),
+      }
+    );
+
+    const data = (await res.json()) as {
+      messages?: { id: string }[];
+      error?: { message: string; code: number };
+    };
+
+    if (!res.ok || data.error) {
+      const errMsg = data.error?.message ?? `HTTP ${res.status}`;
+      return { success: false, error: errMsg };
+    }
+
     return { success: true };
   } catch (err) {
     const error = err instanceof Error ? err.message : "Unknown error";
@@ -202,30 +151,12 @@ export async function sendMessage(
   }
 }
 
+/**
+ * Disconnect / clear credentials.
+ */
 export async function disconnectClient(): Promise<void> {
-  if (state.socket) {
-    try {
-      await state.socket.logout();
-    } catch {
-      // If logout fails, just end the connection
-      try {
-        state.socket.end(undefined);
-      } catch {
-        // ignore
-      }
-    }
-    state.socket = null;
-  }
   state.status = "disconnected";
-  state.qrDataUrl = null;
-  state.pairingCode = null;
   state.error = null;
-
-  // Clear auth state
-  try {
-    const { rmSync } = await import("fs");
-    rmSync(AUTH_FOLDER, { recursive: true, force: true });
-  } catch {
-    // ignore
-  }
+  state.phoneNumberId = null;
+  state.accessToken = null;
 }

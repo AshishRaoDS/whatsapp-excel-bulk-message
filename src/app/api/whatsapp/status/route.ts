@@ -9,13 +9,16 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
-    const phoneNumber = (body as { phoneNumber?: string }).phoneNumber;
+    const { phoneNumberId, accessToken } = body as {
+      phoneNumberId?: string;
+      accessToken?: string;
+    };
 
-    // Start initialization in background (non-blocking)
-    initializeClient(phoneNumber).catch(console.error);
+    // Start initialization (validates credentials against Meta API)
+    initializeClient(phoneNumberId, accessToken).catch(console.error);
+
     return NextResponse.json({
       message: "WhatsApp initialization started",
-      method: phoneNumber ? "pairing_code" : "qr_code",
     });
   } catch (err) {
     const error = err instanceof Error ? err.message : "Unknown error";

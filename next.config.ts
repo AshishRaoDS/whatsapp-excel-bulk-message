@@ -1,11 +1,5 @@
 import type { NextConfig } from "next";
 
-const nextConfig: NextConfig = {
-  serverExternalPackages: [
-    "@whiskeysockets/baileys",
-    "jimp",
-    "sharp",
-  ],
-};
+const nextConfig: NextConfig = {};
 
 export default nextConfig;

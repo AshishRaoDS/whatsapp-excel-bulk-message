@@ -89,3 +89,4 @@ export async function GET() {
 | 2026-02-27 | Fixed QR code not appearing: installed system Chrome libs, configured Puppeteer executablePath using puppeteer.executablePath() to resolve correct Chrome binary for current user |
 | 2026-02-27 | Fixed Chrome "libglib-2.0.so.0 not found" error: updated Chrome path resolution to dynamically scan all home directories' puppeteer cache, fixing root vs agent user mismatch |
 | 2026-02-27 | Replaced whatsapp-web.js + Puppeteer with @whiskeysockets/baileys (pure JS, no Chrome needed). Added dual connection methods: QR code scan OR phone number pairing code. Pairing code is default for easier UX. Auto-reconnect on drops. |
+| 2026-02-27 | Diagnosed root cause: WhatsApp blocks WebSocket connections from cloud/datacenter IPs (405 error). Replaced Baileys with WhatsApp Business Cloud API (Meta's official REST API). App now uses Phone Number ID + Access Token credentials. No browser or WebSocket needed. Added setup guide in UI. |
