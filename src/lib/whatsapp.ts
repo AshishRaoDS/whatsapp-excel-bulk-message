@@ -39,10 +39,22 @@ export async function initializeClient(): Promise<void> {
   state.qrDataUrl = null;
   state.error = null;
 
+  // Find the Chromium executable
+  const chromiumPaths = [
+    "/root/.chromium-browser-snapshots/chromium/linux-1589422/chrome-linux/chrome",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+  ];
+  const { existsSync } = await import("fs");
+  const executablePath = chromiumPaths.find((p) => existsSync(p));
+
   const client = new Client({
     authStrategy: new LocalAuth({ dataPath: "/tmp/whatsapp-session" }),
     puppeteer: {
       headless: true,
+      ...(executablePath ? { executablePath } : {}),
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -88,7 +100,15 @@ export async function initializeClient(): Promise<void> {
   });
 
   state.client = client;
-  await client.initialize();
+  try {
+    await client.initialize();
+  } catch (err) {
+    const error = err instanceof Error ? err.message : "Unknown error";
+    console.error("[WhatsApp] Failed to initialize client:", error);
+    state.status = "error";
+    state.error = `Failed to start WhatsApp: ${error}`;
+    state.client = null;
+  }
 }
 
 export async function sendMessage(
