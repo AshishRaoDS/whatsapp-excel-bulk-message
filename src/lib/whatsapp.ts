@@ -1,5 +1,6 @@
 import { Client, LocalAuth } from "whatsapp-web.js";
 import qrcode from "qrcode";
+import puppeteer from "puppeteer";
 
 export type WhatsAppStatus =
   | "disconnected"
@@ -39,16 +40,31 @@ export async function initializeClient(): Promise<void> {
   state.qrDataUrl = null;
   state.error = null;
 
-  // Find the Chromium executable
+  // Find the Chromium/Chrome executable
+  // puppeteer.executablePath() returns the path for the current user's Puppeteer cache
+  // We also check common system paths as fallbacks
+  const { existsSync } = await import("fs");
+  const { homedir } = await import("os");
+  const home = homedir();
   const chromiumPaths = [
+    puppeteer.executablePath(), // Puppeteer's bundled Chrome (resolves for current user)
+    `${home}/.cache/puppeteer/chrome/linux-145.0.7632.77/chrome-linux64/chrome`,
     "/root/.chromium-browser-snapshots/chromium/linux-1589422/chrome-linux/chrome",
+    `${home}/.chromium-browser-snapshots/chromium/linux-1589422/chrome-linux/chrome`,
     "/usr/bin/chromium-browser",
     "/usr/bin/chromium",
     "/usr/bin/google-chrome",
     "/usr/bin/google-chrome-stable",
   ];
-  const { existsSync } = await import("fs");
-  const executablePath = chromiumPaths.find((p) => existsSync(p));
+  const executablePath = chromiumPaths.find((p) => {
+    try {
+      return existsSync(p);
+    } catch {
+      return false;
+    }
+  });
+
+  console.log("[WhatsApp] Using Chrome executable:", executablePath ?? "puppeteer default");
 
   const client = new Client({
     authStrategy: new LocalAuth({ dataPath: "/tmp/whatsapp-session" }),
