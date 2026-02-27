@@ -52,6 +52,7 @@ export default function Home() {
   const [templateName, setTemplateName] = useState("hello_world");
   const [templateLanguage, setTemplateLanguage] = useState("en_US");
   const [templateParams, setTemplateParams] = useState("");
+  const [useExcelMessage, setUseExcelMessage] = useState(false);
 
   const [file, setFile] = useState<File | null>(null);
   const [sending, setSending] = useState(false);
@@ -170,7 +171,8 @@ export default function Home() {
       }
       formData.append("templateName", templateName.trim());
       formData.append("templateLanguage", templateLanguage.trim() || "en_US");
-      if (templateParams.trim()) {
+      formData.append("useExcelMessage", useExcelMessage ? "true" : "false");
+      if (!useExcelMessage && templateParams.trim()) {
         // Parse comma-separated params into JSON array
         const params = templateParams
           .split(",")
@@ -445,10 +447,10 @@ export default function Home() {
             <div className="mb-5 space-y-3">
               <div className="p-3 bg-blue-900/30 border border-blue-700 rounded-lg text-blue-300 text-xs">
                 💡 <strong>Template messages</strong> work in test mode and are
-                required for first-contact messages. The{" "}
-                <code className="bg-blue-900/50 px-1 rounded">hello_world</code>{" "}
-                template is available by default and takes <strong>no parameters</strong>{" "}
-                — just leave the parameters field empty.
+                required for first-contact messages. To send <strong>personalized messages</strong>{" "}
+                from your Excel file, create a custom template on Meta with a{" "}
+                <code className="bg-blue-900/50 px-1 rounded">{`{{1}}`}</code>{" "}
+                placeholder in the body, then enable &quot;Use message from Excel&quot; below.
               </div>
 
               <div>
@@ -477,23 +479,68 @@ export default function Home() {
                 />
               </div>
 
-              <div>
-                <label className="block text-sm text-neutral-400 mb-1.5">
-                  Template Parameters{" "}
-                  <span className="text-neutral-500">(optional, comma-separated)</span>
-                </label>
-                <input
-                  type="text"
-                  value={templateParams}
-                  onChange={(e) => setTemplateParams(e.target.value)}
-                  placeholder="e.g. John Doe, 123456, Feb 27 2026"
-                  className="w-full px-4 py-3 bg-neutral-700 border border-neutral-600 rounded-xl text-white placeholder-neutral-500 focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 text-sm font-mono"
-                />
-                <p className="text-xs text-neutral-500 mt-1">
-                  These fill in the {`{{1}}`}, {`{{2}}`}, {`{{3}}`}… placeholders
-                  in your template
-                </p>
+              {/* Use Excel message toggle */}
+              <div className="flex items-center gap-3 p-3 bg-neutral-700/50 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setUseExcelMessage((v) => !v)}
+                  className={`relative w-11 h-6 rounded-full transition-colors ${
+                    useExcelMessage ? "bg-green-600" : "bg-neutral-600"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${
+                      useExcelMessage ? "translate-x-5" : ""
+                    }`}
+                  />
+                </button>
+                <div>
+                  <p className="text-sm font-medium">Use message from Excel as {`{{1}}`}</p>
+                  <p className="text-xs text-neutral-400">
+                    Each row&apos;s message column will be sent as the template parameter
+                  </p>
+                </div>
               </div>
+
+              {useExcelMessage && (
+                <div className="p-3 bg-yellow-900/30 border border-yellow-700 rounded-lg text-yellow-300 text-xs">
+                  ⚠️ Your template must have a <code className="bg-yellow-900/50 px-1 rounded">{`{{1}}`}</code>{" "}
+                  placeholder in the body. The <code className="bg-yellow-900/50 px-1 rounded">hello_world</code>{" "}
+                  template does NOT support this — you need to create a custom template on{" "}
+                  <a
+                    href="https://business.facebook.com/wa/manage/message-templates/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-yellow-200 underline"
+                  >
+                    Meta Business Suite
+                  </a>.
+                  <br />
+                  <br />
+                  Excel format: <code className="bg-yellow-900/50 px-1 rounded">phone</code> and{" "}
+                  <code className="bg-yellow-900/50 px-1 rounded">message</code> columns.
+                </div>
+              )}
+
+              {!useExcelMessage && (
+                <div>
+                  <label className="block text-sm text-neutral-400 mb-1.5">
+                    Template Parameters{" "}
+                    <span className="text-neutral-500">(optional, comma-separated)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={templateParams}
+                    onChange={(e) => setTemplateParams(e.target.value)}
+                    placeholder="e.g. John Doe, 123456, Feb 27 2026"
+                    className="w-full px-4 py-3 bg-neutral-700 border border-neutral-600 rounded-xl text-white placeholder-neutral-500 focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 text-sm font-mono"
+                  />
+                  <p className="text-xs text-neutral-500 mt-1">
+                    These fill in the {`{{1}}`}, {`{{2}}`}, {`{{3}}`}… placeholders
+                    in your template (same values for all recipients)
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
@@ -502,7 +549,7 @@ export default function Home() {
             <p className="font-medium text-neutral-300">
               📋 Excel file format:
             </p>
-            {messageType === "template" ? (
+            {messageType === "template" && !useExcelMessage ? (
               <>
                 <p>
                   • Column header:{" "}

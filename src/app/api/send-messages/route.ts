@@ -123,6 +123,7 @@ export async function POST(request: NextRequest) {
       const templateLanguage =
         (formData.get("templateLanguage") as string) || "en_US";
       const templateParamsJson = formData.get("templateParams") as string;
+      const useExcelMessage = formData.get("useExcelMessage") === "true";
 
       if (!templateName) {
         return NextResponse.json(
@@ -131,42 +132,18 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      let phones: string[];
-      try {
-        phones = parseExcelPhoneOnly(buffer);
-      } catch {
-        return NextResponse.json(
-          {
-            error:
-              "Failed to parse Excel file. Please check the file format.",
-          },
-          { status: 400 }
-        );
-      }
-
-      if (phones.length === 0) {
-        return NextResponse.json(
-          {
-            error:
-              "No valid phone numbers found. Ensure the file has a 'phone' column.",
-          },
-          { status: 400 }
-        );
-      }
-
-      // Parse template parameters if provided
-      let components: TemplateComponent[] | undefined;
+      // Parse static template parameters (same for all recipients)
+      let staticComponents: TemplateComponent[] | undefined;
       if (templateParamsJson && templateParamsJson.trim()) {
         try {
           const params = JSON.parse(templateParamsJson) as string[];
-          // Filter out empty strings and only create components if there are real values
           const validParams = params.filter((p) => p && p.trim());
           if (validParams.length > 0) {
             const parameters: TemplateParameter[] = validParams.map((p) => ({
               type: "text" as const,
               text: p.trim(),
             }));
-            components = [{ type: "body", parameters }];
+            staticComponents = [{ type: "body", parameters }];
           }
         } catch {
           return NextResponse.json(
@@ -176,32 +153,117 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      const results: SendResult[] = [];
-      for (const phone of phones) {
-        const result = await sendTemplateMessage(phone, {
-          name: templateName,
-          language: templateLanguage,
-          components,
+      if (useExcelMessage) {
+        // Per-recipient mode: read phone + message columns, use message as {{1}} param
+        let rows: MessageRow[];
+        try {
+          rows = parseExcel(buffer);
+        } catch {
+          return NextResponse.json(
+            {
+              error:
+                "Failed to parse Excel file. Please check the file format.",
+            },
+            { status: 400 }
+          );
+        }
+
+        if (rows.length === 0) {
+          return NextResponse.json(
+            {
+              error:
+                "No valid rows found. Ensure the file has 'phone' and 'message' columns.",
+            },
+            { status: 400 }
+          );
+        }
+
+        const results: SendResult[] = [];
+        for (const row of rows) {
+          // Build per-recipient components using the message column as {{1}}
+          const perRecipientComponents: TemplateComponent[] = [
+            {
+              type: "body",
+              parameters: [{ type: "text" as const, text: row.message }],
+            },
+          ];
+
+          const result = await sendTemplateMessage(row.phone, {
+            name: templateName,
+            language: templateLanguage,
+            components: perRecipientComponents,
+          });
+          results.push({
+            phone: row.phone,
+            message: row.message,
+            success: result.success,
+            error: result.error,
+          });
+          // Small delay to avoid rate limiting
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+
+        const successCount = results.filter((r) => r.success).length;
+        const failCount = results.filter((r) => !r.success).length;
+
+        return NextResponse.json({
+          total: rows.length,
+          success: successCount,
+          failed: failCount,
+          results,
         });
-        results.push({
-          phone,
-          message: `Template: ${templateName}`,
-          success: result.success,
-          error: result.error,
+      } else {
+        // Static mode: same template to all phone numbers
+        let phones: string[];
+        try {
+          phones = parseExcelPhoneOnly(buffer);
+        } catch {
+          return NextResponse.json(
+            {
+              error:
+                "Failed to parse Excel file. Please check the file format.",
+            },
+            { status: 400 }
+          );
+        }
+
+        if (phones.length === 0) {
+          return NextResponse.json(
+            {
+              error:
+                "No valid phone numbers found. Ensure the file has a 'phone' column.",
+            },
+            { status: 400 }
+          );
+        }
+
+        const results: SendResult[] = [];
+        for (const phone of phones) {
+          const result = await sendTemplateMessage(phone, {
+            name: templateName,
+            language: templateLanguage,
+            components: staticComponents,
+          });
+          results.push({
+            phone,
+            message: `Template: ${templateName}`,
+            success: result.success,
+            error: result.error,
+          });
+          // Small delay to avoid rate limiting
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+
+        const successCount = results.filter((r) => r.success).length;
+        const failCount = results.filter((r) => !r.success).length;
+
+        return NextResponse.json({
+          total: phones.length,
+          success: successCount,
+          failed: failCount,
+          results,
         });
-        // Small delay to avoid rate limiting
-        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
-
-      const successCount = results.filter((r) => r.success).length;
-      const failCount = results.filter((r) => !r.success).length;
-
-      return NextResponse.json({
-        total: phones.length,
-        success: successCount,
-        failed: failCount,
-        results,
-      });
     } else {
       // Plain text message mode
       let rows: MessageRow[];
