@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Next.js Template",
-  description: "A minimal Next.js starter template",
+  title: "WhatsApp Bulk Sender",
+  description: "Send bulk WhatsApp messages from an Excel file",
 };
 
 export default function RootLayout({
