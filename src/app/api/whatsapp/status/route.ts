@@ -14,11 +14,17 @@ export async function POST(request: NextRequest) {
       accessToken?: string;
     };
 
-    // Start initialization (validates credentials against Meta API)
-    initializeClient(phoneNumberId, accessToken).catch(console.error);
+    // Await initialization so credentials are validated before responding
+    await initializeClient(phoneNumberId, accessToken);
 
+    const state = getState();
     return NextResponse.json({
-      message: "WhatsApp initialization started",
+      message:
+        state.status === "ready"
+          ? "WhatsApp connected successfully"
+          : `WhatsApp status: ${state.status}`,
+      status: state.status,
+      error: state.error,
     });
   } catch (err) {
     const error = err instanceof Error ? err.message : "Unknown error";

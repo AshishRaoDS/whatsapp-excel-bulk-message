@@ -100,18 +100,37 @@ export default function Home() {
     setConnecting(true);
     setWaError(null);
     setSendResponse(null);
+    setWaStatus("connecting");
 
-    await fetch("/api/whatsapp/status", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        phoneNumberId: phoneNumberId.trim(),
-        accessToken: accessToken.trim(),
-      }),
-    });
+    try {
+      const res = await fetch("/api/whatsapp/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phoneNumberId: phoneNumberId.trim(),
+          accessToken: accessToken.trim(),
+        }),
+      });
 
-    // Poll for status updates
-    pollingRef.current = setInterval(fetchStatus, 1500);
+      const data = await res.json();
+
+      if (data.status === "ready") {
+        setWaStatus("ready");
+        setWaError(null);
+      } else if (data.status === "error" || data.error) {
+        setWaStatus("error");
+        setWaError(data.error || "Failed to connect. Check your credentials.");
+      } else {
+        // Fallback: poll for status updates
+        pollingRef.current = setInterval(fetchStatus, 1500);
+        return;
+      }
+    } catch {
+      setWaStatus("error");
+      setWaError("Network error. Please try again.");
+    }
+
+    setConnecting(false);
   };
 
   const handleDisconnect = async () => {
