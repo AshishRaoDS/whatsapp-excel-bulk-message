@@ -4,14 +4,18 @@ import { useState, useEffect, useRef, useCallback } from "react";
 
 type WhatsAppStatus =
   | "disconnected"
+  | "connecting"
   | "qr_ready"
   | "authenticated"
   | "ready"
   | "error";
 
+type ConnectionMethod = "qr" | "pairing";
+
 interface StatusResponse {
   status: WhatsAppStatus;
   qrDataUrl: string | null;
+  pairingCode: string | null;
   error: string | null;
 }
 
@@ -33,8 +37,12 @@ interface SendResponse {
 export default function Home() {
   const [waStatus, setWaStatus] = useState<WhatsAppStatus>("disconnected");
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [pairingCode, setPairingCode] = useState<string | null>(null);
   const [waError, setWaError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [connectionMethod, setConnectionMethod] =
+    useState<ConnectionMethod>("pairing");
+  const [phoneNumber, setPhoneNumber] = useState("");
 
   const [file, setFile] = useState<File | null>(null);
   const [sending, setSending] = useState(false);
@@ -50,6 +58,7 @@ export default function Home() {
       const data: StatusResponse = await res.json();
       setWaStatus(data.status);
       setQrDataUrl(data.qrDataUrl);
+      setPairingCode(data.pairingCode);
       setWaError(data.error);
 
       if (data.status === "ready" || data.status === "error") {
@@ -72,11 +81,25 @@ export default function Home() {
   }, [fetchStatus]);
 
   const handleConnect = async () => {
+    if (connectionMethod === "pairing" && !phoneNumber.trim()) {
+      setWaError("Please enter your phone number with country code");
+      return;
+    }
+
     setConnecting(true);
     setWaError(null);
     setSendResponse(null);
 
-    await fetch("/api/whatsapp/status", { method: "POST" });
+    const body =
+      connectionMethod === "pairing"
+        ? { phoneNumber: phoneNumber.trim() }
+        : {};
+
+    await fetch("/api/whatsapp/status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
 
     // Poll for status updates
     pollingRef.current = setInterval(fetchStatus, 2000);
@@ -90,6 +113,7 @@ export default function Home() {
     await fetch("/api/whatsapp/disconnect", { method: "POST" });
     setWaStatus("disconnected");
     setQrDataUrl(null);
+    setPairingCode(null);
     setWaError(null);
     setConnecting(false);
     setSendResponse(null);
@@ -138,8 +162,13 @@ export default function Home() {
       color: "text-gray-400",
       dot: "bg-gray-400",
     },
+    connecting: {
+      label: "Connecting…",
+      color: "text-yellow-400",
+      dot: "bg-yellow-400 animate-pulse",
+    },
     qr_ready: {
-      label: "Scan QR Code",
+      label: connectionMethod === "pairing" ? "Enter Code" : "Scan QR Code",
       color: "text-yellow-400",
       dot: "bg-yellow-400 animate-pulse",
     },
@@ -157,6 +186,11 @@ export default function Home() {
   };
 
   const sc = statusConfig[waStatus];
+
+  const showConnectionForm =
+    waStatus === "disconnected" || waStatus === "error";
+  const showQrOrPairing =
+    waStatus === "qr_ready" || waStatus === "connecting";
 
   return (
     <main className="min-h-screen bg-neutral-900 text-white flex flex-col items-center py-12 px-4">
@@ -196,17 +230,122 @@ export default function Home() {
             </div>
           )}
 
-          {waStatus === "qr_ready" && qrDataUrl && (
+          {/* Connection Method Selector */}
+          {showConnectionForm && (
+            <div className="mb-4">
+              <div className="flex rounded-xl bg-neutral-700/50 p-1 mb-4">
+                <button
+                  onClick={() => setConnectionMethod("pairing")}
+                  className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
+                    connectionMethod === "pairing"
+                      ? "bg-green-600 text-white"
+                      : "text-neutral-400 hover:text-white"
+                  }`}
+                >
+                  📱 Phone Number
+                </button>
+                <button
+                  onClick={() => setConnectionMethod("qr")}
+                  className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
+                    connectionMethod === "qr"
+                      ? "bg-green-600 text-white"
+                      : "text-neutral-400 hover:text-white"
+                  }`}
+                >
+                  📷 QR Code
+                </button>
+              </div>
+
+              {connectionMethod === "pairing" && (
+                <div className="mb-4">
+                  <label className="block text-sm text-neutral-400 mb-2">
+                    Enter your phone number with country code
+                  </label>
+                  <input
+                    type="tel"
+                    value={phoneNumber}
+                    onChange={(e) => setPhoneNumber(e.target.value)}
+                    placeholder="e.g. +1234567890"
+                    className="w-full px-4 py-3 bg-neutral-700 border border-neutral-600 rounded-xl text-white placeholder-neutral-500 focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 text-sm"
+                  />
+                  <p className="mt-2 text-xs text-neutral-500">
+                    You&apos;ll receive a pairing code to enter in WhatsApp on
+                    your phone
+                  </p>
+                </div>
+              )}
+
+              {connectionMethod === "qr" && (
+                <div className="mb-4 p-3 bg-neutral-700/50 rounded-lg text-xs text-neutral-400">
+                  <p>
+                    A QR code will appear after clicking Connect. Scan it with
+                    your WhatsApp mobile app.
+                  </p>
+                  <p className="mt-1">
+                    Open WhatsApp → Settings → Linked Devices → Link a Device
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* QR Code Display */}
+          {waStatus === "qr_ready" && qrDataUrl && !pairingCode && (
             <div className="flex flex-col items-center gap-3 mb-4">
               <p className="text-sm text-neutral-400">
                 Scan this QR code with your WhatsApp mobile app
               </p>
               <div className="bg-white p-3 rounded-xl">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={qrDataUrl} alt="WhatsApp QR Code" className="w-52 h-52" />
+                <img
+                  src={qrDataUrl}
+                  alt="WhatsApp QR Code"
+                  className="w-52 h-52"
+                />
               </div>
               <p className="text-xs text-neutral-500">
                 Open WhatsApp → Settings → Linked Devices → Link a Device
+              </p>
+            </div>
+          )}
+
+          {/* Pairing Code Display */}
+          {waStatus === "qr_ready" && pairingCode && (
+            <div className="flex flex-col items-center gap-3 mb-4">
+              <p className="text-sm text-neutral-400">
+                Enter this code in your WhatsApp app
+              </p>
+              <div className="bg-neutral-700 px-8 py-4 rounded-xl">
+                <p className="text-3xl font-mono font-bold tracking-[0.3em] text-green-400">
+                  {pairingCode.replace(/(.{4})/, "$1 ")}
+                </p>
+              </div>
+              <div className="text-xs text-neutral-500 text-center space-y-1">
+                <p className="font-medium text-neutral-400">
+                  How to enter the code:
+                </p>
+                <p>
+                  1. Open WhatsApp on your phone
+                </p>
+                <p>
+                  2. Go to Settings → Linked Devices → Link a Device
+                </p>
+                <p>
+                  3. Tap &quot;Link with phone number instead&quot;
+                </p>
+                <p>
+                  4. Enter the code shown above
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Connecting spinner */}
+          {waStatus === "connecting" && !qrDataUrl && !pairingCode && connecting && (
+            <div className="mb-4 p-4 flex flex-col items-center gap-2">
+              <div className="w-8 h-8 border-2 border-green-400 border-t-transparent rounded-full animate-spin" />
+              <p className="text-sm text-neutral-400">
+                Connecting to WhatsApp…
               </p>
             </div>
           )}
@@ -218,7 +357,7 @@ export default function Home() {
           )}
 
           <div className="flex gap-3">
-            {waStatus === "disconnected" || waStatus === "error" ? (
+            {showConnectionForm ? (
               <button
                 onClick={handleConnect}
                 disabled={connecting}
@@ -226,12 +365,19 @@ export default function Home() {
               >
                 {connecting ? "Connecting…" : "Connect WhatsApp"}
               </button>
-            ) : (
+            ) : waStatus === "ready" ? (
               <button
                 onClick={handleDisconnect}
                 className="flex-1 py-2.5 px-4 bg-neutral-700 hover:bg-neutral-600 rounded-xl font-medium transition-colors text-sm"
               >
                 Disconnect
+              </button>
+            ) : (
+              <button
+                onClick={handleDisconnect}
+                className="flex-1 py-2.5 px-4 bg-neutral-700 hover:bg-neutral-600 rounded-xl font-medium transition-colors text-sm"
+              >
+                Cancel
               </button>
             )}
           </div>

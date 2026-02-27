@@ -1,154 +1,180 @@
-import { Client, LocalAuth } from "whatsapp-web.js";
+import makeWASocket, {
+  useMultiFileAuthState as getMultiFileAuthState,
+  DisconnectReason,
+  type WASocket,
+  type ConnectionState,
+} from "@whiskeysockets/baileys";
 import qrcode from "qrcode";
-import puppeteer from "puppeteer";
 
 export type WhatsAppStatus =
   | "disconnected"
+  | "connecting"
   | "qr_ready"
   | "authenticated"
   | "ready"
   | "error";
 
 interface WhatsAppState {
-  client: Client | null;
+  socket: WASocket | null;
   status: WhatsAppStatus;
   qrDataUrl: string | null;
+  pairingCode: string | null;
   error: string | null;
+  saveCreds: (() => Promise<void>) | null;
 }
 
 const state: WhatsAppState = {
-  client: null,
+  socket: null,
   status: "disconnected",
   qrDataUrl: null,
+  pairingCode: null,
   error: null,
+  saveCreds: null,
 };
+
+const AUTH_FOLDER = "/tmp/whatsapp-auth";
 
 export function getState() {
   return {
     status: state.status,
     qrDataUrl: state.qrDataUrl,
+    pairingCode: state.pairingCode,
     error: state.error,
   };
 }
 
-export async function initializeClient(): Promise<void> {
-  if (state.client) {
+export async function initializeClient(
+  phoneNumber?: string
+): Promise<void> {
+  // If already connected or connecting, don't re-initialize
+  if (state.socket && state.status !== "disconnected" && state.status !== "error") {
     return;
   }
 
-  state.status = "disconnected";
+  // Clean up any existing socket
+  if (state.socket) {
+    try {
+      state.socket.end(undefined);
+    } catch {
+      // ignore cleanup errors
+    }
+    state.socket = null;
+  }
+
+  state.status = "connecting";
   state.qrDataUrl = null;
+  state.pairingCode = null;
   state.error = null;
 
-  // Find the Chromium/Chrome executable
-  // puppeteer.executablePath() may return a path for the wrong user when running as root.
-  // We search multiple candidate paths including all home directories.
-  const { existsSync, readdirSync } = await import("fs");
-  const { homedir } = await import("os");
-  const home = homedir();
-
-  // Collect all home directories to search for puppeteer cache
-  let homeDirs: string[] = [home, "/root"];
   try {
-    const entries = readdirSync("/home");
-    homeDirs = [...new Set([...homeDirs, ...entries.map((e) => `/home/${e}`)])];
-  } catch {
-    // ignore
-  }
+    const { state: authState, saveCreds } =
+      await getMultiFileAuthState(AUTH_FOLDER);
+    state.saveCreds = saveCreds;
 
-  // Dynamically find all chrome binaries in puppeteer cache across all home dirs
-  const candidatesFromHomes: string[] = [];
-  for (const h of homeDirs) {
-    const cacheDir = `${h}/.cache/puppeteer/chrome`;
-    try {
-      const versions = readdirSync(cacheDir);
-      for (const version of versions) {
-        const chromePath = `${cacheDir}/${version}/chrome-linux64/chrome`;
-        candidatesFromHomes.push(chromePath);
+    const usePairingCode = !!phoneNumber;
+
+    const socket = makeWASocket({
+      auth: authState,
+      printQRInTerminal: false,
+      // If using pairing code, we don't need QR
+      browser: usePairingCode
+        ? ["WhatsApp Bulk Sender", "Chrome", "1.0.0"]
+        : undefined,
+    });
+
+    state.socket = socket;
+
+    // If using pairing code method, request it
+    if (usePairingCode && !authState.creds.registered) {
+      try {
+        // Clean the phone number: remove spaces, dashes, +, etc.
+        const cleaned = phoneNumber.replace(/[\s\-\(\)\+]/g, "");
+        const code = await socket.requestPairingCode(cleaned);
+        state.pairingCode = code;
+        state.status = "qr_ready"; // reuse this status to show pairing code
+        console.log("[WhatsApp] Pairing code:", code);
+      } catch (err) {
+        const error = err instanceof Error ? err.message : "Unknown error";
+        console.error("[WhatsApp] Failed to get pairing code:", error);
+        state.status = "error";
+        state.error = `Failed to get pairing code: ${error}`;
+        return;
       }
-    } catch {
-      // ignore if directory doesn't exist
     }
-  }
 
-  const chromiumPaths = [
-    process.env.PUPPETEER_EXECUTABLE_PATH ?? "",
-    puppeteer.executablePath(), // Puppeteer's bundled Chrome (resolves for current process user)
-    ...candidatesFromHomes,
-    "/usr/bin/chromium-browser",
-    "/usr/bin/chromium",
-    "/usr/bin/google-chrome",
-    "/usr/bin/google-chrome-stable",
-  ].filter(Boolean);
+    // Handle connection updates
+    socket.ev.on("connection.update", async (update: Partial<ConnectionState>) => {
+      const { connection, lastDisconnect, qr } = update;
 
-  const executablePath = chromiumPaths.find((p) => {
-    try {
-      return existsSync(p);
-    } catch {
-      return false;
-    }
-  });
+      // QR code received (only when not using pairing code)
+      if (qr && !usePairingCode) {
+        try {
+          state.qrDataUrl = await qrcode.toDataURL(qr);
+          state.status = "qr_ready";
+          console.log("[WhatsApp] QR code generated");
+        } catch {
+          state.error = "Failed to generate QR code";
+          state.status = "error";
+        }
+      }
 
-  console.log("[WhatsApp] Using Chrome executable:", executablePath ?? "puppeteer default");
+      if (connection === "open") {
+        state.status = "ready";
+        state.qrDataUrl = null;
+        state.pairingCode = null;
+        console.log("[WhatsApp] Connected successfully!");
+      }
 
-  const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: "/tmp/whatsapp-session" }),
-    puppeteer: {
-      headless: true,
-      ...(executablePath ? { executablePath } : {}),
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-accelerated-2d-canvas",
-        "--no-first-run",
-        "--no-zygote",
-        "--single-process",
-        "--disable-gpu",
-      ],
-    },
-  });
+      if (connection === "close") {
+        const statusCode =
+          (lastDisconnect?.error as { output?: { statusCode?: number } })?.output
+            ?.statusCode;
 
-  client.on("qr", async (qr) => {
-    try {
-      state.qrDataUrl = await qrcode.toDataURL(qr);
-      state.status = "qr_ready";
-    } catch {
-      state.error = "Failed to generate QR code";
-      state.status = "error";
-    }
-  });
+        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
-  client.on("authenticated", () => {
-    state.status = "authenticated";
-    state.qrDataUrl = null;
-  });
+        console.log(
+          "[WhatsApp] Connection closed. Status code:",
+          statusCode,
+          "Reconnecting:",
+          shouldReconnect
+        );
 
-  client.on("ready", () => {
-    state.status = "ready";
-  });
+        state.socket = null;
+        state.qrDataUrl = null;
+        state.pairingCode = null;
 
-  client.on("disconnected", () => {
-    state.status = "disconnected";
-    state.client = null;
-    state.qrDataUrl = null;
-  });
+        if (shouldReconnect) {
+          // Auto-reconnect after a short delay
+          state.status = "connecting";
+          setTimeout(() => {
+            initializeClient(phoneNumber).catch(console.error);
+          }, 3000);
+        } else {
+          state.status = "disconnected";
+          state.error = "Logged out from WhatsApp. Please reconnect.";
+          // Clear auth state on logout
+          try {
+            const { rmSync } = await import("fs");
+            rmSync(AUTH_FOLDER, { recursive: true, force: true });
+          } catch {
+            // ignore
+          }
+        }
+      }
+    });
 
-  client.on("auth_failure", (msg) => {
-    state.status = "error";
-    state.error = `Authentication failed: ${msg}`;
-    state.client = null;
-  });
-
-  state.client = client;
-  try {
-    await client.initialize();
+    // Save credentials whenever they update
+    socket.ev.on("creds.update", async () => {
+      if (state.saveCreds) {
+        await state.saveCreds();
+      }
+    });
   } catch (err) {
     const error = err instanceof Error ? err.message : "Unknown error";
-    console.error("[WhatsApp] Failed to initialize client:", error);
+    console.error("[WhatsApp] Failed to initialize:", error);
     state.status = "error";
     state.error = `Failed to start WhatsApp: ${error}`;
-    state.client = null;
+    state.socket = null;
   }
 }
 
@@ -156,18 +182,19 @@ export async function sendMessage(
   phone: string,
   message: string
 ): Promise<{ success: boolean; error?: string }> {
-  if (!state.client || state.status !== "ready") {
-    return { success: false, error: "WhatsApp client is not ready" };
+  if (!state.socket || state.status !== "ready") {
+    return { success: false, error: "WhatsApp is not connected" };
   }
 
   try {
-    // Format phone number: remove spaces, dashes, and ensure it has country code
+    // Format phone number: remove spaces, dashes, parentheses
     const cleaned = phone.replace(/[\s\-\(\)]/g, "");
-    const formatted = cleaned.startsWith("+")
-      ? cleaned.slice(1) + "@c.us"
-      : cleaned + "@c.us";
+    // Remove leading + if present, then add @s.whatsapp.net
+    const jid = cleaned.startsWith("+")
+      ? cleaned.slice(1) + "@s.whatsapp.net"
+      : cleaned + "@s.whatsapp.net";
 
-    await state.client.sendMessage(formatted, message);
+    await state.socket.sendMessage(jid, { text: message });
     return { success: true };
   } catch (err) {
     const error = err instanceof Error ? err.message : "Unknown error";
@@ -176,11 +203,29 @@ export async function sendMessage(
 }
 
 export async function disconnectClient(): Promise<void> {
-  if (state.client) {
-    await state.client.destroy();
-    state.client = null;
-    state.status = "disconnected";
-    state.qrDataUrl = null;
-    state.error = null;
+  if (state.socket) {
+    try {
+      await state.socket.logout();
+    } catch {
+      // If logout fails, just end the connection
+      try {
+        state.socket.end(undefined);
+      } catch {
+        // ignore
+      }
+    }
+    state.socket = null;
+  }
+  state.status = "disconnected";
+  state.qrDataUrl = null;
+  state.pairingCode = null;
+  state.error = null;
+
+  // Clear auth state
+  try {
+    const { rmSync } = await import("fs");
+    rmSync(AUTH_FOLDER, { recursive: true, force: true });
+  } catch {
+    // ignore
   }
 }
