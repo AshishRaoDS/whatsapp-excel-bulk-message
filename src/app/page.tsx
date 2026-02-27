@@ -426,9 +426,10 @@ export default function Home() {
             <div className="mb-5 space-y-3">
               <div className="p-3 bg-blue-900/30 border border-blue-700 rounded-lg text-blue-300 text-xs">
                 💡 <strong>Template messages</strong> work in test mode and are
-                required for first-contact messages. Use the{" "}
+                required for first-contact messages. The{" "}
                 <code className="bg-blue-900/50 px-1 rounded">hello_world</code>{" "}
-                template to test, or use your own approved templates.
+                template is available by default and takes <strong>no parameters</strong>{" "}
+                — just leave the parameters field empty.
               </div>
 
               <div>

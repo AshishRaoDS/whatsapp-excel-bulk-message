@@ -190,8 +190,14 @@ export async function sendTemplateMessage(
       language: { code: template.language },
     };
 
+    // Only include components if there are actual parameters with values
     if (template.components && template.components.length > 0) {
-      templatePayload.components = template.components;
+      const validComponents = template.components.filter(
+        (c) => c.parameters && c.parameters.length > 0
+      );
+      if (validComponents.length > 0) {
+        templatePayload.components = validComponents;
+      }
     }
 
     const res = await fetch(

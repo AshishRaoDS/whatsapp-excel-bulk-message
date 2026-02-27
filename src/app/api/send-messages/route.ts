@@ -156,13 +156,15 @@ export async function POST(request: NextRequest) {
 
       // Parse template parameters if provided
       let components: TemplateComponent[] | undefined;
-      if (templateParamsJson) {
+      if (templateParamsJson && templateParamsJson.trim()) {
         try {
           const params = JSON.parse(templateParamsJson) as string[];
-          if (params.length > 0) {
-            const parameters: TemplateParameter[] = params.map((p) => ({
+          // Filter out empty strings and only create components if there are real values
+          const validParams = params.filter((p) => p && p.trim());
+          if (validParams.length > 0) {
+            const parameters: TemplateParameter[] = validParams.map((p) => ({
               type: "text" as const,
-              text: p,
+              text: p.trim(),
             }));
             components = [{ type: "body", parameters }];
           }
