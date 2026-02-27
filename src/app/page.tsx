@@ -10,6 +10,8 @@ type WhatsAppStatus =
   | "ready"
   | "error";
 
+type MessageType = "template" | "text";
+
 interface StatusResponse {
   status: WhatsAppStatus;
   qrDataUrl: string | null;
@@ -42,6 +44,14 @@ export default function Home() {
   const [phoneNumberId, setPhoneNumberId] = useState("");
   const [accessToken, setAccessToken] = useState("");
   const [showToken, setShowToken] = useState(false);
+
+  // Message type
+  const [messageType, setMessageType] = useState<MessageType>("template");
+
+  // Template fields
+  const [templateName, setTemplateName] = useState("hello_world");
+  const [templateLanguage, setTemplateLanguage] = useState("en_US");
+  const [templateParams, setTemplateParams] = useState("");
 
   const [file, setFile] = useState<File | null>(null);
   const [sending, setSending] = useState(false);
@@ -131,6 +141,25 @@ export default function Home() {
 
     const formData = new FormData();
     formData.append("file", file);
+    formData.append("messageType", messageType);
+
+    if (messageType === "template") {
+      if (!templateName.trim()) {
+        setSendError("Template name is required");
+        setSending(false);
+        return;
+      }
+      formData.append("templateName", templateName.trim());
+      formData.append("templateLanguage", templateLanguage.trim() || "en_US");
+      if (templateParams.trim()) {
+        // Parse comma-separated params into JSON array
+        const params = templateParams
+          .split(",")
+          .map((p) => p.trim())
+          .filter(Boolean);
+        formData.append("templateParams", JSON.stringify(params));
+      }
+    }
 
     try {
       const res = await fetch("/api/send-messages", {
@@ -229,7 +258,9 @@ export default function Home() {
             <div className="mb-5">
               <details className="group">
                 <summary className="cursor-pointer text-sm text-blue-400 hover:text-blue-300 flex items-center gap-1 mb-3">
-                  <span className="group-open:rotate-90 transition-transform inline-block">▶</span>
+                  <span className="group-open:rotate-90 transition-transform inline-block">
+                    ▶
+                  </span>
                   How to get your WhatsApp Business API credentials
                 </summary>
                 <div className="mt-2 p-4 bg-neutral-700/50 rounded-xl text-xs text-neutral-300 space-y-2">
@@ -250,7 +281,8 @@ export default function Home() {
                       and log in
                     </li>
                     <li>
-                      Click <strong>My Apps</strong> → <strong>Create App</strong>
+                      Click <strong>My Apps</strong> →{" "}
+                      <strong>Create App</strong>
                     </li>
                     <li>
                       Choose <strong>Business</strong> type → name your app
@@ -356,25 +388,129 @@ export default function Home() {
           </div>
         </div>
 
-        {/* File Upload Card */}
+        {/* Message Type & Upload Card */}
         <div className="bg-neutral-800 rounded-2xl p-6 border border-neutral-700">
-          <h2 className="text-lg font-semibold mb-4">Upload Excel File</h2>
+          <h2 className="text-lg font-semibold mb-4">Send Messages</h2>
 
+          {/* Message Type Toggle */}
+          <div className="mb-5">
+            <label className="block text-sm text-neutral-400 mb-2">
+              Message Type
+            </label>
+            <div className="flex rounded-xl overflow-hidden border border-neutral-600">
+              <button
+                onClick={() => setMessageType("template")}
+                className={`flex-1 py-2.5 px-4 text-sm font-medium transition-colors ${
+                  messageType === "template"
+                    ? "bg-green-600 text-white"
+                    : "bg-neutral-700 text-neutral-400 hover:text-white"
+                }`}
+              >
+                📋 Template Message
+              </button>
+              <button
+                onClick={() => setMessageType("text")}
+                className={`flex-1 py-2.5 px-4 text-sm font-medium transition-colors ${
+                  messageType === "text"
+                    ? "bg-green-600 text-white"
+                    : "bg-neutral-700 text-neutral-400 hover:text-white"
+                }`}
+              >
+                💬 Custom Text
+              </button>
+            </div>
+          </div>
+
+          {/* Template Configuration */}
+          {messageType === "template" && (
+            <div className="mb-5 space-y-3">
+              <div className="p-3 bg-blue-900/30 border border-blue-700 rounded-lg text-blue-300 text-xs">
+                💡 <strong>Template messages</strong> work in test mode and are
+                required for first-contact messages. Use the{" "}
+                <code className="bg-blue-900/50 px-1 rounded">hello_world</code>{" "}
+                template to test, or use your own approved templates.
+              </div>
+
+              <div>
+                <label className="block text-sm text-neutral-400 mb-1.5">
+                  Template Name
+                </label>
+                <input
+                  type="text"
+                  value={templateName}
+                  onChange={(e) => setTemplateName(e.target.value)}
+                  placeholder="e.g. hello_world"
+                  className="w-full px-4 py-3 bg-neutral-700 border border-neutral-600 rounded-xl text-white placeholder-neutral-500 focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 text-sm font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-neutral-400 mb-1.5">
+                  Language Code
+                </label>
+                <input
+                  type="text"
+                  value={templateLanguage}
+                  onChange={(e) => setTemplateLanguage(e.target.value)}
+                  placeholder="e.g. en_US"
+                  className="w-full px-4 py-3 bg-neutral-700 border border-neutral-600 rounded-xl text-white placeholder-neutral-500 focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 text-sm font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-neutral-400 mb-1.5">
+                  Template Parameters{" "}
+                  <span className="text-neutral-500">(optional, comma-separated)</span>
+                </label>
+                <input
+                  type="text"
+                  value={templateParams}
+                  onChange={(e) => setTemplateParams(e.target.value)}
+                  placeholder="e.g. John Doe, 123456, Feb 27 2026"
+                  className="w-full px-4 py-3 bg-neutral-700 border border-neutral-600 rounded-xl text-white placeholder-neutral-500 focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 text-sm font-mono"
+                />
+                <p className="text-xs text-neutral-500 mt-1">
+                  These fill in the {`{{1}}`}, {`{{2}}`}, {`{{3}}`}… placeholders
+                  in your template
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* File Format Info */}
           <div className="mb-4 p-3 bg-neutral-700/50 rounded-lg text-xs text-neutral-400 space-y-1">
             <p className="font-medium text-neutral-300">
               📋 Excel file format:
             </p>
+            {messageType === "template" ? (
+              <>
+                <p>
+                  • Column header:{" "}
+                  <code className="bg-neutral-600 px-1 rounded">phone</code>{" "}
+                  (or first column = phone numbers)
+                </p>
+                <p>
+                  • The same template message will be sent to all numbers
+                </p>
+              </>
+            ) : (
+              <>
+                <p>
+                  • Column headers:{" "}
+                  <code className="bg-neutral-600 px-1 rounded">phone</code> and{" "}
+                  <code className="bg-neutral-600 px-1 rounded">message</code>
+                </p>
+                <p>
+                  • Or first column = phone number, second column = message
+                </p>
+              </>
+            )}
             <p>
-              • Column headers:{" "}
-              <code className="bg-neutral-600 px-1 rounded">phone</code> and{" "}
-              <code className="bg-neutral-600 px-1 rounded">message</code>
+              • Phone numbers should include country code (e.g. 919353125324)
             </p>
-            <p>
-              • Or first column = phone number, second column = message
-            </p>
-            <p>• Phone numbers should include country code (e.g. +1234567890)</p>
           </div>
 
+          {/* File Upload */}
           <div
             className="border-2 border-dashed border-neutral-600 rounded-xl p-8 text-center cursor-pointer hover:border-green-500 transition-colors"
             onClick={() => fileInputRef.current?.click()}
@@ -421,6 +557,8 @@ export default function Home() {
               ? "Connect WhatsApp first"
               : !file
               ? "Upload a file first"
+              : messageType === "template"
+              ? `Send Template "${templateName}"`
               : "Send Messages"}
           </button>
         </div>

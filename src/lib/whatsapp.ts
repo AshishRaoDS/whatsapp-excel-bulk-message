@@ -11,6 +11,8 @@
  * 4. Enter them in the app settings
  */
 
+const API_VERSION = "v22.0";
+
 export type WhatsAppStatus =
   | "disconnected"
   | "connecting"
@@ -24,6 +26,22 @@ interface WhatsAppState {
   error: string | null;
   phoneNumberId: string | null;
   accessToken: string | null;
+}
+
+export interface TemplateComponent {
+  type: "header" | "body" | "button";
+  parameters: TemplateParameter[];
+}
+
+export interface TemplateParameter {
+  type: "text" | "currency" | "date_time" | "image" | "document" | "video";
+  text?: string;
+}
+
+export interface TemplateMessage {
+  name: string;
+  language: string;
+  components?: TemplateComponent[];
 }
 
 const state: WhatsAppState = {
@@ -65,7 +83,7 @@ export async function initializeClient(
   try {
     // Validate credentials by fetching the phone number info
     const res = await fetch(
-      `https://graph.facebook.com/v18.0/${phoneNumberId}?fields=display_phone_number,verified_name`,
+      `https://graph.facebook.com/${API_VERSION}/${phoneNumberId}?fields=display_phone_number,verified_name`,
       {
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -103,7 +121,7 @@ export async function initializeClient(
 }
 
 /**
- * Send a WhatsApp message via the Cloud API.
+ * Send a plain text WhatsApp message via the Cloud API.
  */
 export async function sendMessage(
   phone: string,
@@ -118,7 +136,7 @@ export async function sendMessage(
     const cleaned = phone.replace(/[\s\-\(\)\+]/g, "");
 
     const res = await fetch(
-      `https://graph.facebook.com/v18.0/${state.phoneNumberId}/messages`,
+      `https://graph.facebook.com/${API_VERSION}/${state.phoneNumberId}/messages`,
       {
         method: "POST",
         headers: {
@@ -136,7 +154,66 @@ export async function sendMessage(
 
     const data = (await res.json()) as {
       messages?: { id: string }[];
-      error?: { message: string; code: number };
+      error?: { message: string; code: number; error_subcode?: number };
+    };
+
+    if (!res.ok || data.error) {
+      const errMsg = data.error?.message ?? `HTTP ${res.status}`;
+      return { success: false, error: errMsg };
+    }
+
+    return { success: true };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : "Unknown error";
+    return { success: false, error };
+  }
+}
+
+/**
+ * Send a template WhatsApp message via the Cloud API.
+ * Templates work in test mode (unlike plain text messages).
+ */
+export async function sendTemplateMessage(
+  phone: string,
+  template: TemplateMessage
+): Promise<{ success: boolean; error?: string }> {
+  if (state.status !== "ready" || !state.phoneNumberId || !state.accessToken) {
+    return { success: false, error: "WhatsApp is not connected" };
+  }
+
+  try {
+    // Clean phone number: remove spaces, dashes, parentheses, leading +
+    const cleaned = phone.replace(/[\s\-\(\)\+]/g, "");
+
+    const templatePayload: Record<string, unknown> = {
+      name: template.name,
+      language: { code: template.language },
+    };
+
+    if (template.components && template.components.length > 0) {
+      templatePayload.components = template.components;
+    }
+
+    const res = await fetch(
+      `https://graph.facebook.com/${API_VERSION}/${state.phoneNumberId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${state.accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          to: cleaned,
+          type: "template",
+          template: templatePayload,
+        }),
+      }
+    );
+
+    const data = (await res.json()) as {
+      messages?: { id: string }[];
+      error?: { message: string; code: number; error_subcode?: number };
     };
 
     if (!res.ok || data.error) {
