@@ -85,3 +85,4 @@ export async function GET() {
 | Date | Changes |
 |------|---------|
 | Initial | Template created with base setup |
+| 2026-02-27 | Built WhatsApp Bulk Sender app: Excel file upload, QR code auth, bulk message sending |
